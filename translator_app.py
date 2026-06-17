@@ -648,8 +648,8 @@ with tab_video:
                     tmp.write(v_file.read())
                     tmp_path = tmp.name
                 with st.spinner("음성 인식 중 (첫 실행 시 모델 다운로드로 2~5분 소요)..."):
-                    wm = _w.load_model("tiny")
-                    result = wm.transcribe(tmp_path, language=None)
+                    wm = _w.load_model("base")
+                    result = wm.transcribe(tmp_path, language="zh")
                     text_result = result.get("text","").strip()
                     lang = result.get("language","?")
                 os.unlink(tmp_path)
