@@ -631,8 +631,11 @@ with tab_video:
                                 vid_match.group(1), languages=["zh-Hant","zh-Hans","zh"])
                         except Exception:
                             transcript = YouTubeTranscriptApi.get_transcript(vid_match.group(1))
-                        st.session_state.v_zh_text = " ".join(t["text"] for t in transcript)
+                        fetched = " ".join(t["text"] for t in transcript)
+                        st.session_state.v_zh_text = fetched
+                        st.session_state["v_zh_area"] = fetched
                     st.success(f"자막 {len(transcript)}개 가져옴")
+                    st.rerun()
             except Exception as e:
                 st.error(f"오류: {e}")
     elif v_method == "📁 파일 업로드":
@@ -647,10 +650,13 @@ with tab_video:
                 with st.spinner("음성 인식 중 (첫 실행 시 모델 다운로드로 2~5분 소요)..."):
                     wm = _w.load_model("tiny")
                     result = wm.transcribe(tmp_path, language=None)
-                    st.session_state.v_zh_text = result.get("text","").strip()
+                    text_result = result.get("text","").strip()
                     lang = result.get("language","?")
                 os.unlink(tmp_path)
+                st.session_state.v_zh_text = text_result
+                st.session_state["v_zh_area"] = text_result
                 st.success(f"STT 완료 (감지 언어: {lang})")
+                st.rerun()
             except ImportError:
                 st.error("openai-whisper 패키지가 없습니다. 잠시 후 다시 시도하세요.")
             except Exception as e:
