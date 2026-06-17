@@ -1,0 +1,15 @@
+# 대용량 파일
+data/audio/
+data/*.wav
+
+# 파이썬
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# 분석용 스크립트 (배포 불필요)
+run_stt_all.py
+run_analysis.py
+run_poresignal.py
+build_database.py
