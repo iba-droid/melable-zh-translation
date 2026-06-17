@@ -346,10 +346,20 @@ with tab_trans:
 
             st.markdown("---")
 
-            # 노션 복사용
+            # 노션 복사 버튼
             notion_md = pairs_to_notion(pairs)
-            st.text_area("노션 복붙용 (복사 후 노션에 붙여넣기)", value=notion_md, height=200, key="notion_box")
-            st.caption("위 텍스트 전체 복사 → 노션 페이지에 붙여넣기하면 표로 변환됩니다.")
+            notion_json = json.dumps(notion_md)
+            st.components.v1.html(f"""
+<button id="notionCopyBtn" onclick="
+  navigator.clipboard.writeText({notion_json}).then(() => {{
+    this.innerHTML = '✅ 복사 완료!';
+    setTimeout(() => this.innerHTML = '📋 노션 복사', 1500);
+  }})
+" style="background:#c9184a;color:white;border:none;border-radius:8px;
+padding:10px 0;cursor:pointer;font-size:15px;width:100%;font-weight:600;">
+📋 노션 복사
+</button>
+""", height=50)
 
             col_s, col_c = st.columns(2)
             with col_s:
