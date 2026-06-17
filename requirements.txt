@@ -2,3 +2,4 @@ streamlit
 anthropic
 pandas
 youtube-transcript-api
+openai-whisper

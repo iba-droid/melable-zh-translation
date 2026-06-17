@@ -644,15 +644,15 @@ with tab_video:
                 with _tf.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
                     tmp.write(v_file.read())
                     tmp_path = tmp.name
-                with st.spinner("음성 인식 중 (1~3분 소요)..."):
-                    wm = _w.load_model("small")
+                with st.spinner("음성 인식 중 (첫 실행 시 모델 다운로드로 2~5분 소요)..."):
+                    wm = _w.load_model("tiny")
                     result = wm.transcribe(tmp_path, language=None)
                     st.session_state.v_zh_text = result.get("text","").strip()
                     lang = result.get("language","?")
                 os.unlink(tmp_path)
                 st.success(f"STT 완료 (감지 언어: {lang})")
             except ImportError:
-                st.warning("파일 STT는 로컬 실행 환경에서만 가능합니다. (pip install openai-whisper)")
+                st.error("openai-whisper 패키지가 없습니다. 잠시 후 다시 시도하세요.")
             except Exception as e:
                 st.error(f"STT 오류: {e}")
 
