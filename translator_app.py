@@ -350,16 +350,15 @@ with tab_trans:
             notion_md = pairs_to_notion(pairs)
             notion_json = json.dumps(notion_md)
             st.components.v1.html(f"""
-<button id="notionCopyBtn" onclick="
-  navigator.clipboard.writeText({notion_json}).then(() => {{
-    this.innerHTML = '✅ 복사 완료!';
-    setTimeout(() => this.innerHTML = '📋 노션 복사', 1500);
-  }})
-" style="background:#c9184a;color:white;border:none;border-radius:8px;
+<script>var _nt = {notion_json};</script>
+<button id="nb" onclick="navigator.clipboard.writeText(_nt).then(function(){{
+  document.getElementById('nb').textContent='✅ 복사 완료!';
+  setTimeout(function(){{document.getElementById('nb').textContent='📋 노션 복사';}},1500);
+}})" style="background:#c9184a;color:white;border:none;border-radius:8px;
 padding:10px 0;cursor:pointer;font-size:15px;width:100%;font-weight:600;">
 📋 노션 복사
 </button>
-""", height=50)
+""", height=55)
 
             col_s, col_c = st.columns(2)
             with col_s:
