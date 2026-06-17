@@ -42,6 +42,36 @@ PRODUCT_LABELS = {
     "포어시그널크림": "포어시그널 크림",
 }
 
+ZH_TO_KO_SYSTEM = """당신은 K-뷰티 브랜드 「메라블(MELABLE)」의 중화권 영상 컨텐츠 전문 번역가입니다.
+중국어(번체/간체) 인플루언서 영상 스크립트를 자연스러운 한국어 구어체로 번역합니다.
+
+【브랜드 제품명 통일】
+- Ruby PDRN 安瓶淡斑潔面乳 / 安瓿潔面乳 → 루비알엔 앰플 클렌저
+- Ruby PDRN 皮秒亮白面霜 → 루비알엔 피코샷 크림
+- PoreSignal 毛孔收縮安瓶精華 → 포어시그널 앰플
+- PoreSignal 毛孔緊緻乳霜 → 포어시그널 크림
+- 單寧酸 / 丹寧酸 → 탄닌산 (포어시그널 핵심 성분)
+- PDRN → PDRN (그대로 유지)
+
+【번역 원칙】
+1. 인플루언서 구어체 말투 유지 — 딱딱한 문어체 금지
+2. 감탄 표현 자연스럽게 — 竟然/真的/超/太/哇 → 진짜/완전/대박/헐/와
+3. 효능 표현 정확하게 — 毛孔=모공, 淡斑=기미·잡티, 提亮=톤업·광채, 控油=피지 조절
+4. STT 오류로 의미 불명확한 단어는 문맥에 맞게 수정
+5. 번역 결과만 출력 — 설명·주석 없이
+
+【인플루언서 표현 패턴 (중→한)】
+- 竟然/真的有效 → 진짜 효과 있어요 / 실제로 되더라고요
+- 用了兩週/两周 → 2주 썼더니
+- 毛孔像草莓一樣 → 딸기코처럼 / 모공이 딸기처럼
+- 在家就可以做 → 집에서도 할 수 있어요
+- 不用跑皮膚科 → 피부과 안 가도 돼요
+- 缺貨/賣完了 → 품절이래요
+- 素顏也沒問題 → 노메이크업도 괜찮아요
+- 推薦給大家 → 여러분한테 추천해요
+- 每次照鏡子 → 매일 거울 볼 때마다
+- 一開始半信半疑 → 처음엔 반신반의했는데"""
+
 TONE_GUIDE = {
     "MZ·숏폼":  "인플루언서 구어체 최대. 竟然/真的/超/太/哇 등 감탄사 적극 사용. 흥분되고 친근한 톤.",
     "기본":      "자연스러운 구어체. 적당한 감탄 표현. 읽기 편하고 공감되는 톤.",
@@ -681,18 +711,17 @@ with tab_video:
                 with st.spinner("번역 중..."):
                     resp = client.messages.create(
                         model="claude-sonnet-4-6", max_tokens=3000,
-                        system=(
-                            "당신은 K-뷰티 브랜드 마케팅 전문 번역가입니다.\n"
-                            "중국어(번체 또는 간체) 영상 스크립트를 자연스러운 한국어로 번역합니다.\n"
-                            "인플루언서의 구어체 말투와 감정을 살려서 번역하세요.\n"
-                            "번역 결과만 출력하고 다른 설명은 하지 마세요."
-                        ),
+                        system=ZH_TO_KO_SYSTEM,
                         messages=[{"role":"user","content":f"다음을 한국어로 번역하세요:\n\n{v_zh_edit}"}]
                     )
-                    st.session_state.v_ko_text = resp.content[0].text.strip()
+                    ko_result = resp.content[0].text.strip()
+                    st.session_state.v_ko_text = ko_result
+                    st.session_state["v_ko_area"] = ko_result
+                st.rerun()
             else:
                 st.error("API 키 없음")
 
         if st.session_state.v_ko_text:
+            st.caption("수정 가능")
             st.text_area("v_ko", value=st.session_state.v_ko_text,
-                         height=380, label_visibility="collapsed", key="v_ko_area")
+                         height=350, label_visibility="collapsed", key="v_ko_area")
