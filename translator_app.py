@@ -614,7 +614,7 @@ with tab_video:
         if k not in st.session_state:
             st.session_state[k] = ""
 
-    v_method = st.radio("입력 방식", ["🔗 유튜브 링크", "📁 파일 업로드"], horizontal=True, key="v_method")
+    v_method = st.radio("입력 방식", ["📝 텍스트 직접 입력", "🔗 유튜브 링크", "📁 파일 업로드"], horizontal=True, key="v_method")
 
     if v_method == "🔗 유튜브 링크":
         v_url = st.text_input("유튜브 URL", placeholder="https://www.youtube.com/watch?v=...", key="v_url_input")
@@ -635,7 +635,7 @@ with tab_video:
                     st.success(f"자막 {len(transcript)}개 가져옴")
             except Exception as e:
                 st.error(f"오류: {e}")
-    else:
+    elif v_method == "📁 파일 업로드":
         v_file = st.file_uploader("영상 파일 업로드", type=["mp4","mov","avi","mkv","m4v"], key="v_file_upload")
         if st.button("음성 인식(STT)", key="v_stt_btn") and v_file:
             try:
