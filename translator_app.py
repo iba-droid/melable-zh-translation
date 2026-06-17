@@ -3,6 +3,7 @@
 실행: streamlit run translator_app.py
 """
 import os, sys, json, subprocess, re
+import pandas as pd
 from pathlib import Path
 import streamlit as st
 
@@ -10,7 +11,7 @@ BASE        = Path(__file__).parent
 MEMORY_FILE = BASE / "product_memory.json"
 ANAL_DIR    = BASE / "data" / "analysis"
 
-st.set_page_config(page_title="루비알엔 번체 번역", page_icon="🈳", layout="wide")
+st.set_page_config(page_title="메라블 번체 번역", page_icon="🈳", layout="wide")
 
 st.markdown("""
 <style>
@@ -230,11 +231,11 @@ mem            = load_memory()
 style_examples = load_style_examples()
 products       = mem.get("products", {})
 
-st.title("🈳 루비알엔 번체 번역 대시보드")
+st.title("🈳 메라블 번체 번역 대시보드")
 st.caption("영상 기획안 또는 스크립트 → 번체(Traditional Chinese) 번역")
 st.divider()
 
-tab_trans, tab_ref, tab_product = st.tabs(["번역", "레퍼런스 학습", "제품 설정"])
+tab_trans, tab_ref, tab_product, tab_video = st.tabs(["번역", "레퍼런스 학습", "제품 설정", "🎬 영상→한국어"])
 
 # ════════════════════════════════════════════════════════════════════════════════
 # 탭 1: 번역
@@ -301,6 +302,8 @@ with tab_trans:
         for key in ["tr_pairs","tr_full","tr_input","tr_product"]:
             if key not in st.session_state:
                 st.session_state[key] = None if key in ["tr_pairs","tr_full"] else ""
+        if "tr_version" not in st.session_state:
+            st.session_state.tr_version = 0
 
         if btn and input_text.strip():
             if out_format == "표 형식":
@@ -314,6 +317,7 @@ with tab_trans:
                     st.session_state.tr_full    = None
                     st.session_state.tr_input   = input_text.strip()
                     st.session_state.tr_product = product_key
+                    st.session_state.tr_version += 1
             else:
                 with st.spinner("번역 중..."):
                     result, err = translate_full(input_text.strip(), product_key, region, length_mode, tone_level, mem, style_examples)
@@ -330,10 +334,26 @@ with tab_trans:
             pairs = st.session_state.tr_pairs
             used_pk = st.session_state.tr_product
 
-            st.markdown(pairs_to_html(pairs), unsafe_allow_html=True)
+            # 편집 가능한 테이블 (ZH 칸 직접 수정 가능)
+            df = pd.DataFrame({
+                "META": [p.get("ko","") for p in pairs],
+                "번역": [p.get("zh","") for p in pairs],
+            })
+            edited = st.data_editor(
+                df,
+                column_config={
+                    "META": st.column_config.TextColumn("META", disabled=True, width="medium"),
+                    "번역": st.column_config.TextColumn("번역", width="large"),
+                },
+                hide_index=True,
+                use_container_width=True,
+                num_rows="fixed",
+                key=f"et_{st.session_state.tr_version}",
+            )
+            edited_pairs = [{"ko": r["META"], "zh": r["번역"]} for _, r in edited.iterrows()]
 
-            # 전체 번역 텍스트 합산해서 품질 체크
-            all_zh = " ".join(p.get("zh","") for p in pairs)
+            # 품질 체크
+            all_zh = " ".join(p["zh"] for p in edited_pairs)
             if used_pk in products:
                 missing, found_simp = quality_check(all_zh, used_pk, mem)
                 if not missing and not found_simp:
@@ -347,7 +367,7 @@ with tab_trans:
             st.markdown("---")
 
             # 노션 복사 버튼
-            notion_md = pairs_to_notion(pairs)
+            notion_md = pairs_to_notion(edited_pairs)
             notion_json = json.dumps(notion_md)
             st.components.v1.html(f"""
 <script>var _nt = {notion_json};</script>
@@ -364,7 +384,7 @@ padding:10px 0;cursor:pointer;font-size:15px;width:100%;font-weight:600;">
             with col_s:
                 if st.button("✅ 메모리 저장", use_container_width=True):
                     m2 = load_memory()
-                    for p in pairs:
+                    for p in edited_pairs:
                         if p.get("ko") and p.get("zh"):
                             m2["products"][used_pk].setdefault("sample_phrases",[]).append(
                                 {"ko": p["ko"], "zh": p["zh"]}
@@ -578,8 +598,95 @@ with tab_product:
         m2["products"][edit_key]["required_keywords"]= list(st.session_state.kw_list)
         m2["products"][edit_key]["tone_guidelines"]  = new_tone_guide
         save_memory(m2)
-        # session_state도 갱신
         st.session_state.kw_list    = list(st.session_state.kw_list)
         st.session_state.kw_product = edit_key
         st.success(f"✅ {PRODUCT_LABELS.get(edit_key,'')} 저장 완료")
         st.rerun()
+
+# ════════════════════════════════════════════════════════════════════════════════
+# 탭 4: 영상 → 한국어 번역
+# ════════════════════════════════════════════════════════════════════════════════
+with tab_video:
+    st.subheader("🎬 영상 → 한국어 번역")
+    st.caption("중국어 영상의 자막(유튜브) 또는 음성(파일 업로드)을 한국어로 번역합니다.")
+
+    for k in ["v_zh_text", "v_ko_text"]:
+        if k not in st.session_state:
+            st.session_state[k] = ""
+
+    v_method = st.radio("입력 방식", ["🔗 유튜브 링크", "📁 파일 업로드"], horizontal=True, key="v_method")
+
+    if v_method == "🔗 유튜브 링크":
+        v_url = st.text_input("유튜브 URL", placeholder="https://www.youtube.com/watch?v=...", key="v_url_input")
+        if st.button("자막 가져오기", key="v_fetch_btn") and v_url.strip():
+            try:
+                from youtube_transcript_api import YouTubeTranscriptApi
+                vid_match = re.search(r"(?:v=|youtu\.be/)([^&\n?#]+)", v_url)
+                if not vid_match:
+                    st.error("유효한 유튜브 URL이 아닙니다.")
+                else:
+                    with st.spinner("자막 가져오는 중..."):
+                        try:
+                            transcript = YouTubeTranscriptApi.get_transcript(
+                                vid_match.group(1), languages=["zh-Hant","zh-Hans","zh"])
+                        except Exception:
+                            transcript = YouTubeTranscriptApi.get_transcript(vid_match.group(1))
+                        st.session_state.v_zh_text = " ".join(t["text"] for t in transcript)
+                    st.success(f"자막 {len(transcript)}개 가져옴")
+            except Exception as e:
+                st.error(f"오류: {e}")
+    else:
+        v_file = st.file_uploader("영상 파일 업로드", type=["mp4","mov","avi","mkv","m4v"], key="v_file_upload")
+        if st.button("음성 인식(STT)", key="v_stt_btn") and v_file:
+            try:
+                import whisper as _w, tempfile as _tf
+                suffix = Path(v_file.name).suffix
+                with _tf.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                    tmp.write(v_file.read())
+                    tmp_path = tmp.name
+                with st.spinner("음성 인식 중 (1~3분 소요)..."):
+                    wm = _w.load_model("small")
+                    result = wm.transcribe(tmp_path, language=None)
+                    st.session_state.v_zh_text = result.get("text","").strip()
+                    lang = result.get("language","?")
+                os.unlink(tmp_path)
+                st.success(f"STT 완료 (감지 언어: {lang})")
+            except ImportError:
+                st.warning("파일 STT는 로컬 실행 환경에서만 가능합니다. (pip install openai-whisper)")
+            except Exception as e:
+                st.error(f"STT 오류: {e}")
+
+    st.divider()
+    v_col1, v_col2 = st.columns(2, gap="large")
+
+    with v_col1:
+        st.caption("중국어 원문 (수정 가능)")
+        v_zh_edit = st.text_area("v_zh", value=st.session_state.v_zh_text,
+                                  height=380, label_visibility="collapsed", key="v_zh_area")
+
+    with v_col2:
+        st.caption("한국어 번역 결과")
+        if st.button("한국어로 번역 →", type="primary", key="v_translate_btn",
+                     disabled=(not v_zh_edit.strip())):
+            api_key = get_api_key()
+            if api_key:
+                import anthropic as _ant
+                client = _ant.Anthropic(api_key=api_key)
+                with st.spinner("번역 중..."):
+                    resp = client.messages.create(
+                        model="claude-sonnet-4-6", max_tokens=3000,
+                        system=(
+                            "당신은 K-뷰티 브랜드 마케팅 전문 번역가입니다.\n"
+                            "중국어(번체 또는 간체) 영상 스크립트를 자연스러운 한국어로 번역합니다.\n"
+                            "인플루언서의 구어체 말투와 감정을 살려서 번역하세요.\n"
+                            "번역 결과만 출력하고 다른 설명은 하지 마세요."
+                        ),
+                        messages=[{"role":"user","content":f"다음을 한국어로 번역하세요:\n\n{v_zh_edit}"}]
+                    )
+                    st.session_state.v_ko_text = resp.content[0].text.strip()
+            else:
+                st.error("API 키 없음")
+
+        if st.session_state.v_ko_text:
+            st.text_area("v_ko", value=st.session_state.v_ko_text,
+                         height=380, label_visibility="collapsed", key="v_ko_area")
