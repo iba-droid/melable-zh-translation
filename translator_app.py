@@ -111,12 +111,25 @@ def save_memory(mem):
     st.cache_data.clear()
 
 def get_api_key():
+    # 1) 환경변수 (로컬 실행 + Streamlit Cloud secrets는 환경변수로도 노출됨)
     key = os.environ.get("ANTHROPIC_API_KEY","")
-    if not key:
+    if key:
+        return key
+    # 2) Streamlit Cloud secrets (secrets.toml)
+    try:
+        key = st.secrets.get("ANTHROPIC_API_KEY","")
+        if key:
+            return key
+    except Exception:
+        pass
+    # 3) 로컬 Windows 사용자 환경변수 폴백 (Linux 클라우드에서는 powershell 없음 → 무시)
+    try:
         r = subprocess.run(["powershell","-Command",
             '[System.Environment]::GetEnvironmentVariable("ANTHROPIC_API_KEY","User")'],
             capture_output=True, text=True)
         key = r.stdout.strip()
+    except Exception:
+        key = ""
     return key
 
 # ── 시스템 프롬프트 ───────────────────────────────────────────────────────────
@@ -688,7 +701,9 @@ with tab_video:
                 st.success(f"STT 완료 (감지 언어: {lang})")
                 st.rerun()
             except ImportError:
-                st.error("openai-whisper 패키지가 없습니다. 잠시 후 다시 시도하세요.")
+                st.warning("파일 업로드 음성인식(STT)은 온라인 배포 환경에서는 지원되지 않습니다.\n"
+                           "**🔗 유튜브 링크** 또는 **📝 텍스트 직접 입력**을 이용해 주세요. "
+                           "(파일 STT는 로컬 PC 실행 시에만 가능합니다.)")
             except Exception as e:
                 st.error(f"STT 오류: {e}")
 
