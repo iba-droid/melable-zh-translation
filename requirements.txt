@@ -1,4 +1,5 @@
 streamlit
 anthropic
 pandas
+requests
 youtube-transcript-api<1.0

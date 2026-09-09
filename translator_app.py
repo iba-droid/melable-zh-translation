@@ -10,6 +10,7 @@ import streamlit as st
 BASE        = Path(__file__).parent
 MEMORY_FILE = BASE / "product_memory.json"
 ANAL_DIR    = BASE / "data" / "analysis"
+LEARN_FILE  = BASE / "data" / "learning_data.json"
 
 st.set_page_config(page_title="메라블 번체 번역", page_icon="🈳", layout="wide")
 
@@ -106,9 +107,118 @@ def load_style_examples():
         except: pass
     return phrases[:20]
 
+# ── 학습 데이터 (엑셀 → build_learning_data.py 로 생성) ──────────────────────
+# 톤 강도(UI) → 엑셀 톤 라벨 우선순위
+TONE_MATCH = {
+    "MZ·숏폼":   ["MZ감성", "구어체친근"],
+    "기본":       ["구어체친근", "스토리텔링"],
+    "전문가·차분": ["전문권위", "스토리텔링"],
+}
+# 학습 데이터가 없는 제품 → 대체 제품
+PRODUCT_FALLBACK = {"루비알엔세트": ["루비알엔앰플", "루비알엔크림"]}
+
+@st.cache_data(show_spinner=False)
+def load_learning_data():
+    if not LEARN_FILE.exists():
+        return {"expressions": [], "rules": []}
+    try:
+        return json.loads(LEARN_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {"expressions": [], "rules": []}
+
+def _target_products(product_key):
+    return [product_key] + PRODUCT_FALLBACK.get(product_key, [])
+
+def pick_expressions(product_key, tone_level, learn, limit=10):
+    """제품 → 톤 순으로 좁혀 실제 영상 표현을 고른다. 톤 일치분이 모자라면 같은
+    제품의 다른 톤으로 채운다."""
+    keys = _target_products(product_key)
+    pool = [e for e in learn.get("expressions", []) if e.get("product") in keys]
+    if not pool:
+        return []
+    prefer = TONE_MATCH.get(tone_level, [])
+    def rank(e):
+        t = e.get("tone", "")
+        return (prefer.index(t) if t in prefer else len(prefer), -e.get("score", 0))
+    pool.sort(key=rank)
+    seen, out = set(), []
+    for e in pool:
+        if e["text"] in seen:
+            continue
+        seen.add(e["text"]); out.append(e["text"])
+        if len(out) >= limit:
+            break
+    return out
+
+def pick_rules(product_key, learn, limit=12):
+    """해당 제품의 번역 교정 노트(간체 혼용·오기·지역 표기)를 고른다."""
+    keys = _target_products(product_key)
+    seen, out = set(), []
+    for r in learn.get("rules", []):
+        if r.get("product") not in keys or r["tip"] in seen:
+            continue
+        seen.add(r["tip"]); out.append(r["tip"])
+        if len(out) >= limit:
+            break
+    return out
+
+# ── GitHub 영구 저장 ─────────────────────────────────────────────────────────
+# Streamlit Cloud는 파일시스템이 휘발성이라 재시작하면 저장 내용이 사라진다.
+# GITHUB_TOKEN이 secrets에 있으면 저장 시 repo에도 커밋해 영구 보존한다.
+GH_REPO   = "iba-droid/melable-zh-translation"
+GH_BRANCH = "main"
+GH_PATH   = "product_memory.json"
+
+def _gh_token():
+    tok = os.environ.get("GITHUB_TOKEN", "")
+    if tok:
+        return tok
+    try:
+        return st.secrets.get("GITHUB_TOKEN", "")
+    except Exception:
+        return ""
+
+def push_to_github(mem):
+    """product_memory.json을 GitHub에 커밋. (성공여부, 메시지) 반환."""
+    token = _gh_token()
+    if not token:
+        return False, "GITHUB_TOKEN 미설정"
+    try:
+        import base64, requests, datetime
+        api = f"https://api.github.com/repos/{GH_REPO}/contents/{GH_PATH}"
+        hdr = {"Authorization": f"Bearer {token}",
+               "Accept": "application/vnd.github+json"}
+        # 현재 파일의 sha 조회 (덮어쓰기에 필요)
+        r = requests.get(api, headers=hdr, params={"ref": GH_BRANCH}, timeout=15)
+        sha = r.json().get("sha") if r.status_code == 200 else None
+
+        body = json.dumps(mem, ensure_ascii=False, indent=2).encode("utf-8")
+        stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        payload = {
+            "message": f"대시보드에서 제품 데이터 저장 ({stamp})",
+            "content": base64.b64encode(body).decode(),
+            "branch": GH_BRANCH,
+        }
+        if sha:
+            payload["sha"] = sha
+        r = requests.put(api, headers=hdr, json=payload, timeout=20)
+        if r.status_code in (200, 201):
+            return True, "GitHub 저장 완료"
+        return False, f"GitHub 오류 {r.status_code}: {r.json().get('message','')}"
+    except Exception as e:
+        return False, f"GitHub 저장 실패: {e}"
+
 def save_memory(mem):
     MEMORY_FILE.write_text(json.dumps(mem, ensure_ascii=False, indent=2), encoding="utf-8")
     st.cache_data.clear()
+    ok, msg = push_to_github(mem)
+    if ok:
+        st.toast("✅ GitHub에 영구 저장됨", icon="💾")
+    elif msg == "GITHUB_TOKEN 미설정":
+        st.warning("⚠️ 이 저장은 앱 재시작 시 사라집니다. "
+                   "영구 보존하려면 Streamlit secrets에 GITHUB_TOKEN을 설정하세요.")
+    else:
+        st.error(f"⚠️ 로컬에는 저장됐지만 GitHub 반영 실패 — {msg}")
 
 def get_api_key():
     # 1) 환경변수 (로컬 실행 + Streamlit Cloud secrets는 환경변수로도 노출됨)
@@ -142,10 +252,15 @@ def build_system_prompt(product_key, region, length_mode, tone_level, mem, style
     claims    = "\n".join(f"  - {c}" for c in p.get("key_claims",[]))
     required  = "、".join(p.get("required_keywords",[]))
     mechanism = p.get("mechanism","")
-    style_block = "\n".join(f"  · {e}" for e in style_examples[:8]) if style_examples else "  (없음)"
+    # 제품·톤에 맞는 실제 영상 표현 우선, 없으면 전역 표현으로 폴백
+    learn  = load_learning_data()
+    picked = pick_expressions(product_key, tone_level, learn) or style_examples[:8]
+    rules  = pick_rules(product_key, learn)
+    style_block = "\n".join(f"  · {e}" for e in picked) if picked else "  (없음)"
+    rule_block  = "\n".join(f"  · {r}" for r in rules) if rules else ""
 
     return f"""당신은 K-뷰티 브랜드 「루비알엔(Ruby PDRN)」의 {region} 마케팅 번역 전문가입니다.
-실제 중화권 인플루언서 영상 79편 분석 데이터를 바탕으로 번역합니다.
+실제 중화권 인플루언서 영상 89편 분석 데이터를 바탕으로 번역합니다.
 
 【번역 제품】
 - 한국어명: {p.get('name_ko')} | 번체명: {p.get('name_zh')}
@@ -169,7 +284,7 @@ def build_system_prompt(product_key, region, length_mode, tone_level, mem, style
 
 【실제 영상 핵심 문장】
 {style_block}
-
+{("【실제 번역 교정 노트 (영상 89편에서 도출 — 같은 실수를 반복하지 말 것)】" + chr(10) + rule_block + chr(10)) if rule_block else ""}
 【번역 규칙】
 1. 반드시 번체(繁體中文) — 간체 혼용 절대 금지
 2. 지역: {region} — 약국={rv.get('pharmacy','藥局')}, 피부과={rv.get('dermatologist','皮膚科診所')}, 레이저={rv.get('laser','雷射')}
