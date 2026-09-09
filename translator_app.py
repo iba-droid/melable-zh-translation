@@ -179,46 +179,75 @@ def _gh_token():
         return ""
 
 def push_to_github(mem):
-    """product_memory.json을 GitHub에 커밋. (성공여부, 메시지) 반환."""
+    """product_memory.json을 GitHub에 커밋. (성공여부, 메시지) 반환.
+    외부 의존성 없이 표준 라이브러리(urllib)만 사용한다."""
     token = _gh_token()
     if not token:
         return False, "GITHUB_TOKEN 미설정"
-    try:
-        import base64, requests, datetime
-        api = f"https://api.github.com/repos/{GH_REPO}/contents/{GH_PATH}"
-        hdr = {"Authorization": f"Bearer {token}",
-               "Accept": "application/vnd.github+json"}
-        # 현재 파일의 sha 조회 (덮어쓰기에 필요)
-        r = requests.get(api, headers=hdr, params={"ref": GH_BRANCH}, timeout=15)
-        sha = r.json().get("sha") if r.status_code == 200 else None
 
-        body = json.dumps(mem, ensure_ascii=False, indent=2).encode("utf-8")
+    import base64, datetime, urllib.request, urllib.error
+    api = f"https://api.github.com/repos/{GH_REPO}/contents/{GH_PATH}"
+
+    def _call(url, method="GET", body=None):
+        req = urllib.request.Request(
+            url, method=method,
+            data=json.dumps(body).encode() if body else None,
+            headers={"Authorization": f"Bearer {token}",
+                     "Accept": "application/vnd.github+json",
+                     "User-Agent": "melable-zh-translate",
+                     **({"Content-Type": "application/json"} if body else {})})
+        try:
+            with urllib.request.urlopen(req, timeout=25) as r:
+                return r.status, json.loads(r.read().decode() or "{}")
+        except urllib.error.HTTPError as e:
+            try:
+                return e.code, json.loads(e.read().decode() or "{}")
+            except Exception:
+                return e.code, {}
+
+    try:
+        # 덮어쓰기에 필요한 현재 파일의 sha 조회
+        st_code, body = _call(f"{api}?ref={GH_BRANCH}")
+        sha = body.get("sha") if st_code == 200 else None
+
+        blob  = json.dumps(mem, ensure_ascii=False, indent=2).encode("utf-8")
         stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-        payload = {
-            "message": f"대시보드에서 제품 데이터 저장 ({stamp})",
-            "content": base64.b64encode(body).decode(),
-            "branch": GH_BRANCH,
-        }
+        payload = {"message": f"대시보드에서 제품 데이터 저장 ({stamp})",
+                   "content": base64.b64encode(blob).decode(),
+                   "branch":  GH_BRANCH}
         if sha:
             payload["sha"] = sha
-        r = requests.put(api, headers=hdr, json=payload, timeout=20)
-        if r.status_code in (200, 201):
-            return True, "GitHub 저장 완료"
-        return False, f"GitHub 오류 {r.status_code}: {r.json().get('message','')}"
+
+        st_code, body = _call(api, method="PUT", body=payload)
+        if st_code in (200, 201):
+            return True, body.get("commit", {}).get("sha", "")[:7]
+        return False, f"HTTP {st_code}: {body.get('message', '응답 없음')}"
     except Exception as e:
-        return False, f"GitHub 저장 실패: {e}"
+        return False, f"{type(e).__name__}: {e}"
+
 
 def save_memory(mem):
-    MEMORY_FILE.write_text(json.dumps(mem, ensure_ascii=False, indent=2), encoding="utf-8")
+    # 로컬 쓰기 — 클라우드 파일시스템이 읽기전용일 수 있으므로 실패해도 진행
+    local_err = ""
+    try:
+        MEMORY_FILE.write_text(json.dumps(mem, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError as e:
+        local_err = str(e)
     st.cache_data.clear()
+
+    # 저장 직후 st.rerun()이 호출되는 자리가 있어 메시지를 바로 띄우면 사라진다.
+    # 세션에 담아두고 rerun 뒤 상단에서 렌더한다.
     ok, msg = push_to_github(mem)
     if ok:
-        st.toast("✅ GitHub에 영구 저장됨", icon="💾")
+        st.session_state["_save_status"] = ("ok", f"✅ 저장 완료 — GitHub에 영구 저장됨 (커밋 {msg})")
     elif msg == "GITHUB_TOKEN 미설정":
-        st.warning("⚠️ 이 저장은 앱 재시작 시 사라집니다. "
-                   "영구 보존하려면 Streamlit secrets에 GITHUB_TOKEN을 설정하세요.")
+        st.session_state["_save_status"] = ("warn",
+            "⚠️ 저장했지만 앱 재시작 시 사라집니다 — Streamlit secrets에 GITHUB_TOKEN이 없습니다.")
     else:
-        st.error(f"⚠️ 로컬에는 저장됐지만 GitHub 반영 실패 — {msg}")
+        st.session_state["_save_status"] = ("err", f"❌ GitHub 저장 실패 — {msg}")
+
+    if local_err:
+        st.session_state["_save_status_sub"] = f"로컬 파일 쓰기 실패(클라우드에서는 정상): {local_err}"
 
 def get_api_key():
     # 1) 환경변수 (로컬 실행 + Streamlit Cloud secrets는 환경변수로도 노출됨)
@@ -392,6 +421,15 @@ products       = mem.get("products", {})
 st.title("🈳 메라블 번체 번역 대시보드")
 st.caption("영상 기획안 또는 스크립트 → 번체(Traditional Chinese) 번역")
 st.divider()
+
+# 저장 결과 알림 — save_memory()가 세션에 남긴 메시지를 rerun 뒤 여기서 표시
+_status = st.session_state.pop("_save_status", None)
+if _status:
+    _lvl, _msg = _status
+    {"ok": st.success, "warn": st.warning, "err": st.error}[_lvl](_msg)
+    _sub = st.session_state.pop("_save_status_sub", None)
+    if _sub:
+        st.caption(_sub)
 
 tab_trans, tab_ref, tab_product, tab_video = st.tabs(["번역", "레퍼런스 학습", "제품 설정", "🎬 영상→한국어"])
 
@@ -681,6 +719,11 @@ with tab_ref:
 # ════════════════════════════════════════════════════════════════════════════════
 with tab_product:
     st.subheader("제품 설정")
+    if _gh_token():
+        st.caption("💾 GitHub 영구 저장 **활성** — 저장 시 저장소에 자동 커밋됩니다.")
+    else:
+        st.caption("⚠️ GitHub 영구 저장 **비활성** — secrets에 `GITHUB_TOKEN`이 없어 "
+                   "저장분이 앱 재시작 시 사라집니다.")
     mem = load_memory()
     products = mem.get("products", {})
 
@@ -758,7 +801,6 @@ with tab_product:
         save_memory(m2)
         st.session_state.kw_list    = list(st.session_state.kw_list)
         st.session_state.kw_product = edit_key
-        st.success(f"✅ {PRODUCT_LABELS.get(edit_key,'')} 저장 완료")
         st.rerun()
 
 # ════════════════════════════════════════════════════════════════════════════════
